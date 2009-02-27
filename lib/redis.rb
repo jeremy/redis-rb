@@ -8,9 +8,12 @@ class Redis
   OK = "+OK".freeze
   ERROR = "-".freeze
   NIL = 'nil'.freeze
-  
+
+  attr_reader :socket
+
   def initialize(opts={})
     @opts = {:host => 'localhost', :port => '6379'}.merge(opts)
+    connect
   end
   
   # SET <key> <value>
@@ -450,13 +453,24 @@ class Redis
     write "QUIT\r\n"
     read_proto
   end
-  
-  private
-  
-  def close
-    socket.close unless socket.closed?
+
+  def connect
+    @socket = TCPSocket.new(@opts[:host], @opts[:port])
+    @socket.sync = true
+    @socket
   end
-  
+
+  def close
+    @socket.close if @socket && !@socket.closed?
+  end
+
+  def reconnect
+    close
+    connect
+  end
+
+  private
+
   def timeout_retry(time, retries, &block)
     timeout(time, &block)
   rescue TimeoutError
@@ -464,35 +478,24 @@ class Redis
     retry unless retries < 0
   end
   
-  def socket
-    connect if (!@socket or @socket.closed?)
-    @socket
-  end
-  
-  def connect
-    @socket = TCPSocket.new(@opts[:host], @opts[:port])
-    @socket.sync = true
-    @socket
-  end
-  
   def read(length)
     retries = 3
-    res = socket.read(length)
+    res = @socket.read(length)
   rescue
     retries -= 1
     if retries > 0
-      connect
+      reconnect
       retry
     end
   end
   
   def write(data)
     retries = 3
-    socket.write(data)
+    @socket.write(data)
   rescue
     retries -= 1
     if retries > 0
-      connect
+      reconnect
       retry
     end
   end
