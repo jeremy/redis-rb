@@ -21,30 +21,20 @@ class Redis
   #     Set the string <value> as value of the key.
   #     The string can't be longer than 1073741824 bytes (1 GB).
   def []=(key, val)
-    write "SET #{key} #{val.size}\r\n#{val}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end    
+    res = perform("SET #{key} #{val.size}\r\n#{val}\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
-  
+
   # SETNX <key> <value>
   # Time complexity: O(1)
   #     SETNX works exactly like SET with the only difference that
   #     if the key already exists no operation is performed.
   #     SETNX actually means "SET if Not eXists".
   def set_unless_exists(key, val)
-    write "SETNX #{key} #{val.size}\r\n#{val}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end    
+    res = perform("SETNX #{key} #{val.size}\r\n#{val}\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
-  
+
   # GET <key>
   # Time complexity: O(1)
   #     Get the value of the specified key. If the key
@@ -52,15 +42,8 @@ class Redis
   #     If the value stored at <key> is not a string an error
   #     is returned because GET can only handle string values.
   def [](key)
-    write "GET #{key}\r\n"
-    res = read_proto
-    if res != NIL
-      val = read(res.to_i)
-      nibble_end
-      val
-    else
-      nil
-    end    
+    res = perform("GET #{key}\r\n")
+    fetch(res) if res != NIL
   end
   
   # INCR <key>
@@ -70,8 +53,7 @@ class Redis
   #     value was zero). If the value at <key> is not a string value
   #     an error is returned.
   def incr(key)
-    write "INCR #{key}\r\n"
-    read_proto.to_i
+    perform("INCR #{key}\r\n").to_i
   end
   
   # !! SEEMS BROKEN IN REDIS SERVER RIGHT NOW !!
@@ -79,8 +61,7 @@ class Redis
   # INCRBY works just like INCR but instead to increment by 1 the
   #     increment is <num>.
   def incrby(key, num)
-    write "INCRBY #{key} #{num}\r\n"
-    read_proto.to_i
+    perform("INCRBY #{key} #{num}\r\n").to_i
   end
   
   # DECR <key>
@@ -90,8 +71,7 @@ class Redis
   #     value was zero). If the value at <key> is not a string value
   #     an error is returned.
   def decr(key)
-    write "DECR #{key}\r\n"
-    read_proto.to_i
+    perform("DECR #{key}\r\n").to_i
   end
   
   # !! SEEMS BROKEN IN REDIS SERVER RIGHT NOW !!
@@ -99,16 +79,14 @@ class Redis
   # DECRBY works just like DECR but instead to decrement by 1 the
   #    decrement is <value>.
   def decrby(key, num)
-    write "DECRBY #{key} #{num}\r\n"
-    read_proto.to_i
+    perform("DECRBY #{key} #{num}\r\n").to_i
   end
   
   # RANDOMKEY
   # Time complexity: O(1)
   #     Returns a random key from the currently seleted DB.
   def randkey
-    write "RANDOMKEY\r\n"
-    read_proto
+    perform("RANDOMKEY\r\n")
   end
 
   # RENAME <oldkey> <newkey>
@@ -116,26 +94,16 @@ class Redis
   #     destination name are the same an error is returned. If <newkey>
   #     already exists it is overwritten.
   def rename!(oldkey, newkey)
-    write "RENAME #{oldkey} #{newkey}\r\n"
-    res = read_proto
-    if res == OK
-      newkey
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("RENAME #{oldkey} #{newkey}\r\n")
+    res == OK ? newkey : raise(RedisError, res.inspect)
   end
   
   # RENAMENX <oldkey> <newkey>
   #     Just like RENAME but fails if the destination key <newkey>
   #     already exists.
   def rename(oldkey, newkey)
-    write "RENAMENX #{oldkey} #{newkey}\r\n"
-    res = read_proto
-    if res == OK
-      newkey
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("RENAMENX #{oldkey} #{newkey}\r\n")
+    res == OK ? newkey : raise(RedisError, res.inspect)
   end
   
   # EXISTS <key>
@@ -145,8 +113,7 @@ class Redis
   #     Note that even keys set with an empty string as value will
   #     return "1".
   def key?(key)
-    write "EXISTS #{key}\r\n"
-    read_proto.to_i == 1
+    perform("EXISTS #{key}\r\n") == '1'
   end
   
   # DEL <key>
@@ -155,12 +122,8 @@ class Redis
   #     no operation is performed. The command always returns success.
   # 
   def delete(key)
-    write "DEL #{key}\r\n"
-    if read_proto == OK
-      true
-    else
-      raise RedisError
-    end
+    res = perform("DEL #{key}\r\n")
+    res == OK || raise(RedisError)
   end
   
   # KEYS <pattern>
@@ -170,13 +133,8 @@ class Redis
   #     database the keys "foo" and "foobar" the command "KEYS foo*"
   #     will return "foo foobar".
   def keys(glob)
-    write "KEYS #{glob}\r\n"
-    res = read_proto
-    if res
-      keys = read(res.to_i).split(" ")
-      nibble_end
-      keys
-    end
+    res = perform("KEYS #{glob}\r\n")
+    fetch(res).split(/ /)
   end
   
   # !! SEEMS BROKEN IN REDIS SERVER RIGHT NOW !!
@@ -186,8 +144,7 @@ class Redis
   #     string. The type can be one of "NONE","STRING","LIST","SET".
   #     NONE is returned if the key does not exist.
   def type?(key)
-    write "TYPE #{key}\r\n"
-    read_proto
+    perform("TYPE #{key}\r\n")
   end
   
   # RPUSH <key> <string>
@@ -197,13 +154,8 @@ class Redis
   #     the append operation. If the key exists but is not a List an error
   #     is returned.
   def push_head(key, string)
-    write "RPUSH #{key} #{string.size}\r\n#{string}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("RPUSH #{key} #{string.size}\r\n#{string}\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # LPUSH <key> <string>
@@ -213,13 +165,8 @@ class Redis
   #     the append operation. If the key exists but is not a List an error
   #     is returned.
   def push_tail(key, string)
-    write "LPUSH #{key} #{string.size}\r\n#{string}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("LPUSH #{key} #{string.size}\r\n#{string}\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # 
@@ -230,8 +177,8 @@ class Redis
   #     empty lists). If the value stored at key is not a list an error
   #     is returned.
   def list_length(key)
-    write "LLEN #{key}\r\n"
-    Integer(read_proto)
+    res = perform("LLEN #{key}\r\n")
+    Integer(res) unless res == '0'
   end
   
   # 
@@ -253,18 +200,12 @@ class Redis
   #     If end over the end of the list Redis will threat it just like
   #     the last element of the list.
   def list_range(key, start, ending)
-    write "LRANGE #{key} #{start} #{ending}\r\n"
-    res = read_proto
+    res = perform("LRANGE #{key} #{start} #{ending}\r\n")
     if res[0] = ERROR
       raise RedisError, read_proto
     else
       items = Integer(read_proto)
-      list = []
-      items.times do
-        list << read(Integer(read_proto))
-        nibble_end
-      end  
-      list
+      (0..items).map { fetch(Integer(read_proto)) }
     end
   end
   
@@ -299,13 +240,8 @@ class Redis
   #     in this way LTRIM is an O(1) operation because in the average case
   #     just one element is removed from the tail of the list.
   def list_trim(key, start, ending)
-    write "LTRIM #{key} #{start} #{ending}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("LTRIM #{key} #{start} #{ending}\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # 
@@ -322,15 +258,8 @@ class Redis
   #     Note that even if the average time complexity is O(n) asking for
   #     the first or the last element of the list is O(1).
   def list_index(key, index)
-    write "LINDEX #{key} #{index}\r\n"
-    res = read_proto
-    if res != NIL
-      val = read(res.to_i)
-      nibble_end
-      val
-    else
-      nil
-    end    
+    res = perform("LINDEX #{key} #{index}\r\n")
+    fetch(res) if res != NIL
   end
   
   # 
@@ -343,30 +272,16 @@ class Redis
   #     If the <key> does not exist or the list is already empty the special
   #     value 'nil' is returned.
   def list_pop_head(key)
-    write "LPOP #{key} #{index}\r\n"
-    res = read_proto
-    if res != NIL
-      val = read(res.to_i)
-      nibble_end
-      val
-    else
-      nil
-    end    
+    res = perform("LPOP #{key} #{index}\r\n")
+    fetch(res) if res != NIL
   end
   
   # RPOP <key>
   #     This command works exactly like LPOP, but the last element instead
   #     of the first element of the list is returned/deleted.
   def list_pop_tail(key)
-    write "RPOP #{key} #{index}\r\n"
-    res = read_proto
-    if res != NIL
-      val = read(res.to_i)
-      nibble_end
-      val
-    else
-      nil
-    end    
+    res = perform("RPOP #{key} #{index}\r\n")
+    fetch(res) if res != NIL
   end
   
   # SELECT <index>
@@ -374,13 +289,8 @@ class Redis
   #     For default every new client connection is automatically selected
   #     to DB 0.
   def select_db(index)
-    write "SELECT #{index}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("SELECT\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   # 
   # MOVE <key> <index>
@@ -388,13 +298,8 @@ class Redis
   #     destination DB. If a key with the same name exists in the destination
   #     DB an error is returned.
   def move(key, index)
-    write "MOVE #{index}\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("MOVE\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # SAVE
@@ -402,13 +307,8 @@ class Redis
   #     completed, no connection is served in the meanwhile. An OK code
   #     is returned when the DB was fully stored in disk.
   def save
-    write "SAVE\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("SAVE\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # BGSAVE
@@ -417,13 +317,8 @@ class Redis
   #     saves the DB on disk then exit. A client my be able to check if the
   #     operation succeeded using the LASTSAVE command.
   def bgsave
-    write "BGSAVE\r\n"
-    res = read_proto
-    if res == OK
-      true
-    else
-      raise RedisError, res.inspect
-    end
+    res = perform("BGSAVE\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # 
@@ -432,9 +327,9 @@ class Redis
   #     A client may check if a BGSAVE command succeeded reading the LASTSAVE
   #     value, then issuing a BGSAVE command and checking at regular intervals
   #     every N seconds if LASTSAVE changed.
-  def bgsave
-    write "LASTSAVE\r\n"
-    read_proto
+  def lastsave
+    res = perform("LASTSAVE\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   # 
@@ -444,14 +339,14 @@ class Redis
   #     This is not guaranteed if the client uses simply "SAVE" and then
   #     "QUIT" because other clients may alter the DB data between the two
   #     commands.
-  def bgsave
-    write "SHUTDOWN\r\n"
-    read_proto
+  def shutdown
+    res = perform("SHUTDOWN\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
   
   def quit
-    write "QUIT\r\n"
-    read_proto
+    res = perform("QUIT\r\n")
+    res == OK || raise(RedisError, res.inspect)
   end
 
   def connect
@@ -469,48 +364,18 @@ class Redis
     connect
   end
 
-  private
+  protected
 
-  def timeout_retry(time, retries, &block)
-    timeout(time, &block)
-  rescue TimeoutError
-    retries -= 1
-    retry unless retries < 0
+  def perform(command)
+    @socket.write(command)
+    @socket.gets.chop
   end
-  
-  def read(length)
-    retries = 3
-    res = @socket.read(length)
-  rescue
-    retries -= 1
-    if retries > 0
-      reconnect
-      retry
-    end
+
+  def fetch(res)
+    @socket.read(res.to_i + 2).chop
   end
-  
-  def write(data)
-    retries = 3
-    @socket.write(data)
-  rescue
-    retries -= 1
-    if retries > 0
-      reconnect
-      retry
-    end
-  end
-  
-  def nibble_end
-    read(2)
-  end
-  
+
   def read_proto
-    buff = ""
-    while (char = read(1))
-      buff << char
-      break if buff[-2..-1] == "\r\n"
-    end
-    buff[0..-3]
+    @socket.gets.chop
   end
-  
 end
