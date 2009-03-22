@@ -69,7 +69,7 @@ class Redis
   def [](key)
     timeout_retry(3, 3){
       res = perform("GET #{key}\r\n")
-      redis_unmarshal(bulk_reply(res))
+      bulk_reply(res)
     }
   end
   
@@ -226,6 +226,7 @@ class Redis
   # 
   # Return value: status code reply
   def push_tail(key, string)
+    string = redis_marshal(string)
     timeout_retry(3, 3){
       res = perform("RPUSH #{key} #{string.size}\r\n#{string}\r\n")
       status_code_reply(res)
@@ -240,6 +241,7 @@ class Redis
   # 
   # Return value: status code reply
   def push_head(key, string)
+    string = redis_marshal(string)
     timeout_retry(3, 3){
       res = perform("LPUSH #{key} #{string.size}\r\n#{string}\r\n")
       status_code_reply(res)
@@ -280,8 +282,9 @@ class Redis
   # 
   # Return value: status code reply
   def list_set(key, index, val)
+    val = redis_marshal(val)
     timeout_retry(3, 3){
-      res = perform("LSET #{key} #{index} #{val.to_s.size}\r\n#{val}\r\n")
+      res = perform("LSET #{key} #{index} #{val.size}\r\n#{val}\r\n")
       status_code_reply(res)
     }
   end
@@ -409,7 +412,8 @@ class Redis
   # -1 if the specified key does not exist
   # -2 if the specified key does not hold a list value
   def list_rm(key, count, value)
-    res = perform("LREM #{key} #{count} #{value.to_s.size}\r\n#{value}\r\n").to_i
+    value = redis_marshal(value)
+    res = perform("LREM #{key} #{count} #{value.size}\r\n#{value}\r\n").to_i
     case res
     when -1
       raise RedisError, "key: #{key} does not exist"
@@ -432,8 +436,9 @@ class Redis
   # 1 if the new element was added 0 if the new element was already a member
   # of the set -2 if the key contains a non set value
   def set_add(key, member)
+    member = redis_marshal(member)
     timeout_retry(3, 3){
-      res = perform("SADD #{key} #{member.to_s.size}\r\n#{member}\r\n").to_i
+      res = perform("SADD #{key} #{member.size}\r\n#{member}\r\n").to_i
       case res
       when 1
         true
@@ -457,8 +462,9 @@ class Redis
   # 1 if the new element was removed 0 if the new element was not a member 
   # of the set -2 if the key does not hold a set value
   def set_delete(key, member)
+    member = redis_marshal(member)
     timeout_retry(3, 3){
-      res = perform("SREM #{key} #{member.to_s.size}\r\n#{member}\r\n")
+      res = perform("SREM #{key} #{member.size}\r\n#{member}\r\n")
       case res
       when 1
         true
@@ -507,8 +513,9 @@ class Redis
   # 1 if the element is a member of the set 0 if the element is not a member of
   # the set OR if the key does not exist -2 if the key does not hold a set value
   def set_member?(key, member)
+    member = redis_marshal(member)
     timeout_retry(3, 3){
-      res = perform("SISMEMBER #{key} #{member.size}\r\n#{member}\r\n")
+      res = perform("SISMEMBER #{key} #{member.size}\r\n#{member}\r\n").to_i
       case res
       when 1
         true
@@ -707,8 +714,9 @@ class Redis
   
   def quit
     timeout_retry(3, 3){
-      status_code_reply(perform("QUIT\r\n"))
+      perform("QUIT\r\n")
     }
+    close
   end
 
   
@@ -716,8 +724,8 @@ class Redis
     info = {}
   
     x = timeout_retry(3, 3){
-      write "INFO\r\n"
-      read(read_proto.to_i.abs).split("\r\n")
+      size = perform("INFO\r\n").to_i.abs
+      @socket.read(size).split("\r\n")
     }
   
     x.each do |kv|
@@ -759,17 +767,25 @@ class Redis
   private
 
   def perform(command)
+    puts "> #{command}" if ENV['DEBUG']
     @socket.write(command)
-    read_proto
+    res = read_proto
+    puts "< #{res}" if ENV['DEBUG']
+    res
   end
 
-  def fetch(res)
-    res = res.to_i.abs
-    @socket.read(res + 2).chop if res > 0
+  def fetch(len)
+    len = [0, len.to_i].max
+    res = @socket.read(len + 2)
+    res = res.chop if res
+    puts "| #{res}" if ENV['DEBUG']
+    res
   end
 
   def read_proto
-    @socket.gets.chop
+    if res = @socket.gets
+      res.chop
+    end
   end
   
   
@@ -785,7 +801,7 @@ class Redis
     if res.index(ERRCODE) == 0
       raise RedisError, fetch(res)
     elsif res != NIL
-      fetch(res)
+      redis_unmarshal(fetch(res))
     else
       nil
     end
@@ -798,8 +814,11 @@ class Redis
     elsif res == NIL
       nil  
     else
-      items = Integer(res)
-      (0..items).map { fetch(Integer(read_proto)) }
+      list = []
+      Integer(res).times do
+        list << redis_unmarshal(fetch(Integer(read_proto)))
+      end
+      list
     end
   end
 
@@ -811,7 +830,7 @@ class Redis
   end
 
   def redis_unmarshal(obj)
-    if obj[0] == 4
+    if obj && obj[0] == 4
       Marshal.load(obj)
     else
       obj
