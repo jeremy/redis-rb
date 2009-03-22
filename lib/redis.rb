@@ -1,5 +1,5 @@
 require 'socket'
-#require File.join(File.dirname(__FILE__),'better_timeout')
+require File.join(File.dirname(__FILE__),'better_timeout')
 require 'set'
 
 class RedisError < StandardError
@@ -55,7 +55,7 @@ class Redis
   def set_unless_exists(key, val)
     val = redis_marshal(val)
     timeout_retry(3, 3){
-      OK == perform("SETNX #{key} #{val.size}\r\n#{val}\r\n")
+      1 == perform("SETNX #{key} #{val.size}\r\n#{val}\r\n")
     }
   end
   
@@ -390,6 +390,36 @@ class Redis
     }
   end
   
+  # LREM key count value
+  # 
+  # Time complexity: O(N) (with N being the length of the list)
+  # 
+  # Remove the first count occurrences of the value element from the list. 
+  # If count is zero all the elements are removed. If count is negative 
+  # elements are removed from tail to head, instead to go from head to 
+  # tail that is the normal behaviour. So for example LREM with count -2 
+  # and hello as value to remove against the list (a,b,c,hello,x,hello,hello) 
+  # will lave the list (a,b,c,hello,x). The number of removed elements is 
+  # returned as an integer, see below for more information aboht the returned value.
+  # Return value
+  # 
+  # Integer Reply, specifically:
+  # 
+  # The number of removed elements if the operation succeeded
+  # -1 if the specified key does not exist
+  # -2 if the specified key does not hold a list value
+  def list_rm(key, count, value)
+    res = perform("LREM #{key} #{count} #{value.to_s.size}\r\n#{value}\r\n").to_i
+    case res
+    when -1
+      raise RedisError, "key: #{key} does not exist"
+    when -2
+      raise RedisError, "key: #{key} does not hold a list value"
+    else
+      res
+    end
+  end
+  
   # SADD key member
   # Time complexity O(1)
   # Add the specified member to the set value stored at key. If member is 
@@ -681,6 +711,36 @@ class Redis
     }
   end
 
+  
+  def info
+    info = {}
+  
+    x = timeout_retry(3, 3){
+      write "INFO\r\n"
+      read(read_proto.to_i.abs).split("\r\n")
+    }
+  
+    x.each do |kv|
+      k,v = kv.split(':')[0], kv.split(':')[1]
+      info[k.to_sym] = v
+    end
+  
+    info
+  end
+  
+  def flush_db
+    timeout_retry(3, 3){
+      perform("FLUSHDB\r\n")
+    }
+  end
+  
+  
+  def last_save
+    timeout_retry(3, 3){
+      perform("LASTSAVE\r\n").to_i
+    }
+  end
+  
   def connect
     @socket = TCPSocket.new(@opts[:host], @opts[:port])
     @socket.sync = true
