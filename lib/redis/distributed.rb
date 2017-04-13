@@ -279,11 +279,15 @@ class Redis
 
     # Get the values of all the given keys.
     def mget(*keys)
-      raise CannotDistribute, :mget
+      mapped_mget(*keys).values_at(*keys)
     end
 
     def mapped_mget(*keys)
-      raise CannotDistribute, :mapped_mget
+      results = {}
+      keys.group_by { |k| node_for k }.each do |node, subkeys|
+        results.merge! node.mapped_mget(*subkeys)
+      end
+      results
     end
 
     # Overwrite part of a string at key starting at the specified offset.
